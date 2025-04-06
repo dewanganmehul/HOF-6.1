@@ -1,128 +1,80 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.20;
 
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+interface IERC20 {
+    function transferFrom(address from, address to, uint256 value) external returns (bool);
+    function transfer(address to, uint256 value) external returns (bool);
+    function balanceOf(address account) external view returns (uint256);
+}
 
-contract GameCurrencySwap is ReentrancyGuard {
-    IERC20 public immutable tokenA;
-    IERC20 public immutable tokenB;
-    
-    uint256 public reserveA;
-    uint256 public reserveB;
-    uint256 public constant FEE_BPS = 30; // 0.3% fee
-    uint256 public totalLiquidity;
-    mapping(address => uint256) public liquidity;
+contract GameCurrencyPool {
+    address public admin;
 
-    event Swap(address indexed user, address tokenIn, uint256 amountIn, address tokenOut, uint256 amountOut);
-    event LiquidityAdded(address indexed provider, uint256 amountA, uint256 amountB);
-    event LiquidityRemoved(address indexed provider, uint256 amountA, uint256 amountB);
+    // Track supported tokens (ERC20 in-game currencies)
+    mapping(address => bool) public supportedTokens;
 
-    constructor(address _tokenA, address _tokenB) {
-        tokenA = IERC20(_tokenA);
-        tokenB = IERC20(_tokenB);
+    // Player balances per token
+    mapping(address => mapping(address => uint256)) public playerBalances; // user => token => amount
+
+    modifier onlyAdmin() {
+        require(msg.sender == admin, "Not authorized");
+        _;
     }
 
-    // Add liquidity to the pool
-    function addLiquidity(uint256 amountA, uint256 amountB) external nonReentrant {
-        require(amountA > 0 && amountB > 0, "Cannot add zero liquidity");
-        
-        // Transfer tokens from user
-        tokenA.transferFrom(msg.sender, address(this), amountA);
-        tokenB.transferFrom(msg.sender, address(this), amountB);
+    event TokenSupported(address token);
+    event Deposited(address indexed user, address token, uint256 amount);
+    event Exchanged(address indexed user, address fromToken, address toToken, uint256 amount);
+    event Withdrawn(address indexed user, address token, uint256 amount);
 
-        // Calculate liquidity shares
-        uint256 liquidityAmount;
-        if (totalLiquidity == 0) {
-            liquidityAmount = sqrt(amountA * amountB);
-        } else {
-            liquidityAmount = min(
-                (amountA * totalLiquidity) / reserveA,
-                (amountB * totalLiquidity) / reserveB
-            );
-        }
-        
-        // Update reserves and liquidity
-        reserveA += amountA;
-        reserveB += amountB;
-        liquidity[msg.sender] += liquidityAmount;
-        totalLiquidity += liquidityAmount;
-
-        emit LiquidityAdded(msg.sender, amountA, amountB);
+    constructor() {
+        admin = msg.sender;
     }
 
-    // Remove liquidity from the pool
-    function removeLiquidity(uint256 liquidityAmount) external nonReentrant {
-        require(liquidityAmount > 0, "Invalid liquidity amount");
-        require(liquidity[msg.sender] >= liquidityAmount, "Insufficient liquidity");
-
-        // Calculate proportional amounts
-        uint256 amountA = (reserveA * liquidityAmount) / totalLiquidity;
-        uint256 amountB = (reserveB * liquidityAmount) / totalLiquidity;
-        
-        // Update reserves and liquidity
-        reserveA -= amountA;
-        reserveB -= amountB;
-        liquidity[msg.sender] -= liquidityAmount;
-        totalLiquidity -= liquidityAmount;
-
-        // Transfer tokens back to user
-        tokenA.transfer(msg.sender, amountA);
-        tokenB.transfer(msg.sender, amountB);
-
-        emit LiquidityRemoved(msg.sender, amountA, amountB);
+    // Admin adds a supported token (e.g., G1T, G2T, etc.)
+    function addSupportedToken(address token) external onlyAdmin {
+        require(token != address(0), "Invalid token address");
+        supportedTokens[token] = true;
+        emit TokenSupported(token);
     }
 
-    // Swap between tokens
-    function swap(address tokenIn, uint256 amountIn) external nonReentrant returns (uint256 amountOut) {
-        require(amountIn > 0, "Invalid input amount");
-        require(tokenIn == address(tokenA) || tokenIn == address(tokenB), "Invalid token");
+    // Deposit in-game currency to the pool
+    function deposit(address token, uint256 amount) external {
+        require(supportedTokens[token], "Token not supported");
+        require(IERC20(token).transferFrom(msg.sender, address(this), amount), "Transfer failed");
 
-        (IERC20 tokenOut, uint256 inputReserve, uint256 outputReserve) = 
-            (tokenIn == address(tokenA)) 
-                ? (tokenB, reserveA, reserveB)
-                : (tokenA, reserveB, reserveA);
+        playerBalances[msg.sender][token] += amount;
 
-        // Transfer input tokens from user
-        IERC20(tokenIn).transferFrom(msg.sender, address(this), amountIn);
-
-        // Calculate output amount with fee
-        uint256 amountInWithFee = amountIn * (10000 - FEE_BPS);
-        amountOut = (amountInWithFee * outputReserve) / 
-                   ((inputReserve * 10000) + amountInWithFee);
-
-        require(amountOut > 0, "Insufficient output amount");
-
-        // Update reserves
-        if (tokenIn == address(tokenA)) {
-            reserveA += amountIn;
-            reserveB -= amountOut;
-        } else {
-            reserveB += amountIn;
-            reserveA -= amountOut;
-        }
-
-        // Transfer output tokens to user
-        tokenOut.transfer(msg.sender, amountOut);
-
-        emit Swap(msg.sender, tokenIn, amountIn, address(tokenOut), amountOut);
+        emit Deposited(msg.sender, token, amount);
     }
 
-    // Helper functions
-    function sqrt(uint256 y) internal pure returns (uint256 z) {
-        if (y > 3) {
-            z = y;
-            uint256 x = y / 2 + 1;
-            while (x < z) {
-                z = x;
-                x = (y / x + x) / 2;
-            }
-        } else if (y != 0) {
-            z = 1;
-        }
+    // Exchange one supported token to another at 1:1 value
+    function exchange(address fromToken, address toToken, uint256 amount) external {
+        require(supportedTokens[fromToken] && supportedTokens[toToken], "Tokens must be supported");
+        require(fromToken != toToken, "Cannot exchange same token");
+        require(playerBalances[msg.sender][fromToken] >= amount, "Insufficient balance");
+
+        // Check if enough liquidity of the target token
+        require(IERC20(toToken).balanceOf(address(this)) >= amount, "Insufficient pool liquidity");
+
+        // Deduct from sender's internal balance
+        playerBalances[msg.sender][fromToken] -= amount;
+        playerBalances[msg.sender][toToken] += amount;
+
+        emit Exchanged(msg.sender, fromToken, toToken, amount);
     }
 
-    function min(uint256 a, uint256 b) internal pure returns (uint256) {
-        return a < b ? a : b;
+    // Withdraw tokens to player wallet
+    function withdraw(address token, uint256 amount) external {
+        require(playerBalances[msg.sender][token] >= amount, "Insufficient balance");
+
+        playerBalances[msg.sender][token] -= amount;
+        require(IERC20(token).transfer(msg.sender, amount), "Transfer failed");
+
+        emit Withdrawn(msg.sender, token, amount);
+    }
+
+    // View user balance for a specific token
+    function getUserBalance(address user, address token) external view returns (uint256) {
+        return playerBalances[user][token];
     }
 }
