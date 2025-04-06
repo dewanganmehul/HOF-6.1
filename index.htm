@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Game Currency Exchange</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f3f4f6;
+      padding: 20px;
+    }
+    .container {
+      max-width: 600px;
+      margin: auto;
+      background: white;
+      padding: 20px;
+      border-radius: 10px;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    }
+    input, select, button {
+      width: 100%;
+      padding: 10px;
+      margin: 8px 0;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+    }
+    button {
+      background: #4f46e5;
+      color: white;
+      border: none;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #4338ca;
+    }
+    .section {
+      margin-bottom: 20px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>Game Currency Exchange</h2>
+
+    <div class="section">
+      <label for="token">Token Address:</label>
+      <input type="text" id="token" placeholder="Enter token address" />
+      <button onclick="addToken()">Add Supported Token</button>
+    </div>
+
+    <div class="section">
+      <label for="depositToken">Deposit Token:</label>
+      <input type="text" id="depositToken" placeholder="Token address" />
+      <input type="number" id="depositAmount" placeholder="Amount" />
+      <button onclick="depositToken()">Deposit</button>
+    </div>
+
+    <div class="section">
+      <label for="fromToken">From Token:</label>
+      <input type="text" id="fromToken" placeholder="From token address" />
+      <label for="toToken">To Token:</label>
+      <input type="text" id="toToken" placeholder="To token address" />
+      <input type="number" id="exchangeAmount" placeholder="Amount" />
+      <button onclick="exchangeTokens()">Exchange</button>
+    </div>
+
+    <div class="section">
+      <label for="withdrawToken">Withdraw Token:</label>
+      <input type="text" id="withdrawToken" placeholder="Token address" />
+      <input type="number" id="withdrawAmount" placeholder="Amount" />
+      <button onclick="withdrawToken()">Withdraw</button>
+    </div>
+  </div>
+
+  <script>
+    const CONTRACT_ADDRESS = "YOUR_CONTRACT_ADDRESS_HERE";
+    const ABI = [ /* Paste the ABI here */ ];
+
+    let contract;
+    let signer;
+
+    async function connect() {
+      if (window.ethereum) {
+        await window.ethereum.request({ method: "eth_requestAccounts" });
+        const provider = new ethers.providers.Web3Provider(window.ethereum);
+        signer = provider.getSigner();
+        contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+      } else {
+        alert("Please install MetaMask.");
+      }
+    }
+
+    async function addToken() {
+      await connect();
+      const token = document.getElementById("token").value;
+      await contract.addSupportedToken(token);
+      alert("Token added successfully");
+    }
+
+    async function depositToken() {
+      await connect();
+      const token = document.getElementById("depositToken").value;
+      const amount = document.getElementById("depositAmount").value;
+
+      const erc20 = new ethers.Contract(token, ["function approve(address spender, uint256 value) public returns (bool)"], signer);
+      await erc20.approve(CONTRACT_ADDRESS, amount);
+      await contract.deposit(token, amount);
+      alert("Deposit successful");
+    }
+
+    async function exchangeTokens() {
+      await connect();
+      const fromToken = document.getElementById("fromToken").value;
+      const toToken = document.getElementById("toToken").value;
+      const amount = document.getElementById("exchangeAmount").value;
+
+      await contract.exchange(fromToken, toToken, amount);
+      alert("Exchange successful");
+    }
+
+    async function withdrawToken() {
+      await connect();
+      const token = document.getElementById("withdrawToken").value;
+      const amount = document.getElementById("withdrawAmount").value;
+
+      await contract.withdraw(token, amount);
+      alert("Withdraw successful");
+    }
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"></script>
+</body>
+</html>
